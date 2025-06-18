@@ -2,6 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -14,7 +15,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
  * @custom:version 0.1.6
  * @custom:documentation https://openprices.gitbook.io/openoracle-docs
  */
-contract OpenOracle is ReentrancyGuard {
+contract OpenOracle is ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
 
     // Custom errors for gas optimization
@@ -45,10 +46,10 @@ contract OpenOracle is ReentrancyGuard {
     uint256 public constant PERCENTAGE_PRECISION = 1e7;
     uint256 public constant MULTIPLIER_PRECISION = 100;
     uint256 public constant SETTLEMENT_WINDOW = 60; // 60 seconds for testing
-    address public constant PROTOCOL_FEE_RECIPIENT = 0x043c740dB5d907aa7604c2E8E9E0fffF435fa0e4;
 
     // State variables
     uint256 public nextReportId = 1;
+    address public protocolFeeRecipient;
     
     mapping(uint256 => ReportMeta) public reportMeta;
     mapping(uint256 => ReportStatus) public reportStatus;
@@ -135,7 +136,25 @@ contract OpenOracle is ReentrancyGuard {
         uint256 settlementTimestamp
     );
 
-    constructor() ReentrancyGuard() {}
+    event ProtocolFeeRecipientUpdated(
+        address indexed oldRecipient,
+        address indexed newRecipient
+    );
+
+    constructor() ReentrancyGuard() Ownable(msg.sender) {
+        protocolFeeRecipient = 0x043c740dB5d907aa7604c2E8E9E0fffF435fa0e4;
+    }
+
+    /**
+     * @notice Updates the protocol fee recipient address
+     * @param newRecipient The new protocol fee recipient address
+     */
+    function updateProtocolFeeRecipient(address newRecipient) external onlyOwner {
+        require(newRecipient != address(0), "Invalid recipient address");
+        address oldRecipient = protocolFeeRecipient;
+        protocolFeeRecipient = newRecipient;
+        emit ProtocolFeeRecipientUpdated(oldRecipient, newRecipient);
+    }
 
     /**
      * @notice Withdraws accumulated protocol fees for a specific token
@@ -145,7 +164,7 @@ contract OpenOracle is ReentrancyGuard {
         uint256 amount = protocolFees[tokenToGet];
         if (amount > 0) {
             protocolFees[tokenToGet] = 0;
-            _transferTokens(tokenToGet, address(this), payable(PROTOCOL_FEE_RECIPIENT), amount);
+            _transferTokens(tokenToGet, address(this), payable(protocolFeeRecipient), amount);
         }
     }
 
@@ -184,7 +203,7 @@ contract OpenOracle is ReentrancyGuard {
         _sendEth(payable(msg.sender), settlerReward);
         
         if (status.disputeOccurred) {
-            _sendEth(payable(PROTOCOL_FEE_RECIPIENT), reporterReward);
+            _sendEth(payable(protocolFeeRecipient), reporterReward);
         } else {
             _sendEth(status.initialReporter, reporterReward);
         }
