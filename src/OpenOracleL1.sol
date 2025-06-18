@@ -39,7 +39,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
     // State variables
     uint256 public nextReportId = 1;
     address public protocolFeeRecipient;
-    
+
     mapping(uint256 => ReportMeta) public reportMeta;
     mapping(uint256 => ReportStatus) public reportStatus;
     mapping(address => uint256) public protocolFees;
@@ -90,7 +90,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         uint256 protocolFee,
         uint256 settlerReward
     );
-    
+
     event InitialReportSubmitted(
         uint256 indexed reportId,
         address reporter,
@@ -104,7 +104,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         uint256 disputeDelay,
         uint256 escalationHalt
     );
-    
+
     event ReportDisputed(
         uint256 indexed reportId,
         address disputer,
@@ -118,17 +118,10 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         uint256 disputeDelay,
         uint256 escalationHalt
     );
-    
-    event ReportSettled(
-        uint256 indexed reportId,
-        uint256 price,
-        uint256 settlementTimestamp
-    );
 
-    event ProtocolFeeRecipientUpdated(
-        address indexed oldRecipient,
-        address indexed newRecipient
-    );
+    event ReportSettled(uint256 indexed reportId, uint256 price, uint256 settlementTimestamp);
+
+    event ProtocolFeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
 
     constructor() ReentrancyGuard() Ownable(msg.sender) {
         protocolFeeRecipient = 0x043c740dB5d907aa7604c2E8E9E0fffF435fa0e4;
@@ -163,11 +156,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
      * @return price The final settled price
      * @return settlementTimestamp The timestamp when the report was settled
      */
-    function settle(uint256 reportId)
-        external
-        nonReentrant
-        returns (uint256 price, uint256 settlementTimestamp)
-    {
+    function settle(uint256 reportId) external nonReentrant returns (uint256 price, uint256 settlementTimestamp) {
         ReportStatus storage status = reportStatus[reportId];
         ReportMeta storage meta = reportMeta[reportId];
 
@@ -190,7 +179,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         }
 
         _sendEth(payable(msg.sender), settlerReward);
-        
+
         if (status.disputeOccurred) {
             _sendEth(payable(protocolFeeRecipient), reporterReward);
         } else {
@@ -250,7 +239,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         if (msg.value <= settlerReward) revert InsufficientAmount("settler reward fee");
 
         reportId = nextReportId++;
-        
+
         ReportMeta storage meta = reportMeta[reportId];
         meta.token1 = token1Address;
         meta.token2 = token2Address;
@@ -329,7 +318,10 @@ contract OpenOracle is ReentrancyGuard, Ownable {
      * @param newAmount1 New amount of token1 after the dispute
      * @param newAmount2 New amount of token2 after the dispute
      */
-    function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount1, uint256 newAmount2) external nonReentrant {
+    function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount1, uint256 newAmount2)
+        external
+        nonReentrant
+    {
         ReportMeta storage meta = reportMeta[reportId];
         ReportStatus storage status = reportStatus[reportId];
 
@@ -351,7 +343,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         status.price = (newAmount1 * PRICE_PRECISION) / newAmount2;
         status.disputeOccurred = true;
         status.lastDisputeBlock = _getBlockNumber();
-        
+
         emit ReportDisputed(
             reportId,
             msg.sender,
@@ -381,7 +373,9 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         if (reportId > nextReportId) revert InvalidInput("report id");
         if (newAmount1 == 0 || newAmount2 == 0) revert InvalidInput("token amounts");
         if (status.currentReporter == address(0)) revert NoReportToDispute();
-        if (block.timestamp > status.reportTimestamp + meta.settlementTime) revert InvalidTiming("dispute period expired");
+        if (block.timestamp > status.reportTimestamp + meta.settlementTime) {
+            revert InvalidTiming("dispute period expired");
+        }
         if (status.isSettled) revert AlreadyProcessed("report settled");
         if (status.isDistributed) revert AlreadyProcessed("report distributed");
         if (tokenToSwap != meta.token1 && tokenToSwap != meta.token2) revert InvalidInput("token to swap");
@@ -390,13 +384,13 @@ contract OpenOracle is ReentrancyGuard, Ownable {
 
         uint256 oldAmount1 = status.currentAmount1;
         uint256 expectedAmount1;
-        
+
         if (meta.escalationHalt > oldAmount1) {
             expectedAmount1 = (oldAmount1 * meta.multiplier) / MULTIPLIER_PRECISION;
         } else {
             expectedAmount1 = oldAmount1;
         }
-        
+
         if (newAmount1 != expectedAmount1) {
             if (meta.escalationHalt <= oldAmount1) {
                 revert OutOfBounds("escalation halted");
@@ -410,7 +404,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         uint256 lowerBoundary = oldPrice > feeBoundary ? oldPrice - feeBoundary : 0;
         uint256 upperBoundary = oldPrice + feeBoundary;
         uint256 newPrice = (newAmount1 * PRICE_PRECISION) / newAmount2;
-        
+
         if (newPrice >= lowerBoundary && newPrice <= upperBoundary) {
             revert OutOfBounds("price within boundaries");
         }
@@ -419,64 +413,53 @@ contract OpenOracle is ReentrancyGuard, Ownable {
     /**
      * @dev Handles token swaps when token1 is being swapped during a dispute
      */
-    function _handleToken1Swap(
-        ReportMeta storage meta,
-        ReportStatus storage status,
-        uint256 newAmount2
-    ) internal {
+    function _handleToken1Swap(ReportMeta storage meta, ReportStatus storage status, uint256 newAmount2) internal {
         uint256 oldAmount1 = status.currentAmount1;
         uint256 oldAmount2 = status.currentAmount2;
         uint256 fee = (oldAmount1 * meta.feePercentage) / PERCENTAGE_PRECISION;
         uint256 protocolFee = (oldAmount1 * meta.protocolFee) / PERCENTAGE_PRECISION;
-        
+
         protocolFees[meta.token1] += protocolFee;
 
         IERC20(meta.token1).safeTransferFrom(msg.sender, address(this), oldAmount1 + fee + protocolFee);
         IERC20(meta.token1).safeTransfer(status.currentReporter, 2 * oldAmount1 + fee);
 
-        uint256 requiredToken1Contribution = meta.escalationHalt > oldAmount1
-            ? (oldAmount1 * meta.multiplier) / MULTIPLIER_PRECISION
-            : oldAmount1;
+        uint256 requiredToken1Contribution =
+            meta.escalationHalt > oldAmount1 ? (oldAmount1 * meta.multiplier) / MULTIPLIER_PRECISION : oldAmount1;
 
         uint256 netToken2Contribution = newAmount2 >= oldAmount2 ? newAmount2 - oldAmount2 : 0;
         uint256 netToken2Receive = newAmount2 < oldAmount2 ? oldAmount2 - newAmount2 : 0;
-    
+
         if (netToken2Contribution > 0) {
             IERC20(meta.token2).safeTransferFrom(msg.sender, address(this), netToken2Contribution);
         }
-    
+
         if (netToken2Receive > 0) {
             IERC20(meta.token2).safeTransfer(msg.sender, netToken2Receive);
         }
-    
+
         IERC20(meta.token1).safeTransferFrom(msg.sender, address(this), requiredToken1Contribution);
     }
 
     /**
      * @dev Handles token swaps when token2 is being swapped during a dispute
      */
-    function _handleToken2Swap(
-        ReportMeta storage meta,
-        ReportStatus storage status,
-        uint256 newAmount2
-    ) internal {
+    function _handleToken2Swap(ReportMeta storage meta, ReportStatus storage status, uint256 newAmount2) internal {
         uint256 oldAmount1 = status.currentAmount1;
         uint256 oldAmount2 = status.currentAmount2;
         uint256 fee = (oldAmount2 * meta.feePercentage) / PERCENTAGE_PRECISION;
         uint256 protocolFee = (oldAmount2 * meta.protocolFee) / PERCENTAGE_PRECISION;
-        
+
         protocolFees[meta.token2] += protocolFee;
 
         IERC20(meta.token2).safeTransferFrom(msg.sender, address(this), oldAmount2 + fee + protocolFee);
         IERC20(meta.token2).safeTransfer(status.currentReporter, 2 * oldAmount2 + fee);
 
-        uint256 requiredToken1Contribution = meta.escalationHalt > oldAmount1
-            ? (oldAmount1 * meta.multiplier) / MULTIPLIER_PRECISION
-            : oldAmount1;
+        uint256 requiredToken1Contribution =
+            meta.escalationHalt > oldAmount1 ? (oldAmount1 * meta.multiplier) / MULTIPLIER_PRECISION : oldAmount1;
 
-        uint256 netToken1Contribution = requiredToken1Contribution > oldAmount1
-            ? requiredToken1Contribution - oldAmount1
-            : 0;
+        uint256 netToken1Contribution =
+            requiredToken1Contribution > oldAmount1 ? requiredToken1Contribution - oldAmount1 : 0;
 
         if (netToken1Contribution > 0) {
             IERC20(meta.token1).safeTransferFrom(msg.sender, address(this), netToken1Contribution);
@@ -500,7 +483,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
      * @dev Internal function to send ETH to a recipient
      */
     function _sendEth(address payable recipient, uint256 amount) internal {
-        (bool success, ) = recipient.call{value: amount}("");
+        (bool success,) = recipient.call{value: amount}("");
         if (!success) revert EthTransferFailed();
     }
 
@@ -517,16 +500,11 @@ contract OpenOracle is ReentrancyGuard, Ownable {
             id == 0xa4b1 // Arbitrum One chain ID
         ) {
             address ARB_SYS_ADDRESS = 0x0000000000000000000000000000000000000064;
-            (bool success, bytes memory data) = ARB_SYS_ADDRESS.staticcall(
-                abi.encodeWithSignature("arbBlockNumber()")
-            );
+            (bool success, bytes memory data) = ARB_SYS_ADDRESS.staticcall(abi.encodeWithSignature("arbBlockNumber()"));
             if (!success) revert CallToArbSysFailed();
-            return abi.decode(data, (uint256));        
+            return abi.decode(data, (uint256));
         }
 
         return block.number;
     }
-
-
-
 }

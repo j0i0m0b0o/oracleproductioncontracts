@@ -11,7 +11,7 @@ interface IOpenOracle {
      * @return The next report ID to be created
      */
     function nextReportId() external view returns (uint256);
-    
+
     /**
      * @notice Settles a report and returns settlement data
      * @param reportId The ID of the report to settle
@@ -19,7 +19,7 @@ interface IOpenOracle {
      * @return settlementTimestamp The timestamp when settled
      */
     function settle(uint256 reportId) external returns (uint256 price, uint256 settlementTimestamp);
-    
+
     /**
      * @notice Gets the status information for a report
      * @param reportId The ID of the report
@@ -35,20 +35,23 @@ interface IOpenOracle {
      * @return isDistributed Whether rewards have been distributed
      * @return lastDisputeBlock Block number of last dispute
      */
-    function reportStatus(uint256 reportId) external view returns (
-        uint256 currentAmount1,
-        uint256 currentAmount2,
-        address payable currentReporter,
-        address payable initialReporter,
-        uint256 reportTimestamp,
-        uint256 settlementTimestamp,
-        uint256 price,
-        bool isSettled,
-        bool disputeOccurred,
-        bool isDistributed,
-        uint256 lastDisputeBlock
-    );
-    
+    function reportStatus(uint256 reportId)
+        external
+        view
+        returns (
+            uint256 currentAmount1,
+            uint256 currentAmount2,
+            address payable currentReporter,
+            address payable initialReporter,
+            uint256 reportTimestamp,
+            uint256 settlementTimestamp,
+            uint256 price,
+            bool isSettled,
+            bool disputeOccurred,
+            bool isDistributed,
+            uint256 lastDisputeBlock
+        );
+
     /**
      * @notice Gets the metadata for a report
      * @param reportId The ID of the report
@@ -65,18 +68,21 @@ interface IOpenOracle {
      * @return settlerReward Reward for settling
      * @return requestBlock Block when report was requested
      */
-    function reportMeta(uint256 reportId) external view returns (
-        address token1,
-        address token2,
-        uint256 feePercentage,
-        uint256 multiplier,
-        uint256 settlementTime,
-        uint256 exactToken1Report,
-        uint256 fee,
-        uint256 escalationHalt,
-        uint256 disputeDelay,
-        uint256 protocolFee,
-        uint256 settlerReward,
-        uint256 requestBlock
-    );
+    function reportMeta(uint256 reportId)
+        external
+        view
+        returns (
+            address token1,
+            address token2,
+            uint256 feePercentage,
+            uint256 multiplier,
+            uint256 settlementTime,
+            uint256 exactToken1Report,
+            uint256 fee,
+            uint256 escalationHalt,
+            uint256 disputeDelay,
+            uint256 protocolFee,
+            uint256 settlerReward,
+            uint256 requestBlock
+        );
 }

@@ -34,7 +34,7 @@ contract AutoBeacon is ReentrancyGuard {
         if (oracleAddress == address(0)) revert InvalidOracleAddress();
         oracle = IOpenOracle(oracleAddress);
     }
-    
+
     /**
      * @notice Automatically finds and settles available reports, forwarding rewards to caller
      * @dev Checks the most recent reports and settles the first available one
@@ -67,13 +67,13 @@ contract AutoBeacon is ReentrancyGuard {
         // Forward any rewards received to the caller
         uint256 received = address(this).balance - startBalance;
         if (received > 0) {
-            (bool success, ) = payable(msg.sender).call{value: received}("");
+            (bool success,) = payable(msg.sender).call{value: received}("");
             if (!success) revert EthTransferFailed();
-            
+
             emit ReportSettled(settledReportId, received, msg.sender);
         }
     }
-    
+
     /**
      * @dev Checks if a report is ready to be settled
      * @param reportId The ID of the report to check
@@ -85,38 +85,14 @@ contract AutoBeacon is ReentrancyGuard {
             return false;
         }
 
-        (
-            ,
-            ,
-            ,
-            ,
-            uint256 reportTimestamp,
-            ,
-            ,
-            bool isSettled,
-            ,
-            bool isDistributed,
-            
-        ) = oracle.reportStatus(reportId);
+        (,,,, uint256 reportTimestamp,,, bool isSettled,, bool isDistributed,) = oracle.reportStatus(reportId);
 
         // Skip if already settled or distributed
         if (isSettled || isDistributed) {
             return false;
         }
 
-        (
-            ,
-            ,
-            ,
-            ,
-            uint256 settlementTime,
-            ,
-            ,
-            ,
-            ,
-            ,
-            ,
-        ) = oracle.reportMeta(reportId);
+        (,,,, uint256 settlementTime,,,,,,,) = oracle.reportMeta(reportId);
 
         // Check if settlement time has been reached
         return block.timestamp >= reportTimestamp + settlementTime;
