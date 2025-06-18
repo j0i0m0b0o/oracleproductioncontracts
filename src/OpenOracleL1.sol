@@ -19,25 +19,14 @@ contract OpenOracle is ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
 
     // Custom errors for gas optimization
-    error InsufficientFee();
-    error InvalidTokenAmount();
-    error InvalidReportId();
+    error InvalidInput(string parameter);
+    error InsufficientAmount(string resource);
+    error AlreadyProcessed(string action);
+    error InvalidTiming(string action);
+    error OutOfBounds(string parameter);
     error TokensCannotBeSame();
-    error InvalidSettlementTime();
-    error InsufficientFeeForSettlerReward();
-    error ReportAlreadySubmitted();
     error NoReportToDispute();
-    error DisputePeriodExpired();
-    error ReportAlreadySettled();
-    error ReportAlreadyDistributed();
-    error InvalidTokenToSwap();
     error DisputeAlreadyInBlock();
-    error DisputeTooEarly();
-    error InvalidNewAmount();
-    error EscalationHalted();
-    error NewPriceWithinBoundaries();
-    error SettlementTimeNotReached();
-    error ReportNotSettled();
     error EthTransferFailed();
     error CallToArbSysFailed();
 
@@ -187,7 +176,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         }
 
         if (block.timestamp < status.reportTimestamp + meta.settlementTime) {
-            revert SettlementTimeNotReached();
+            revert InvalidTiming("settlement");
         }
 
         uint256 settlerReward = meta.settlerReward;
@@ -224,7 +213,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
      */
     function getSettlementData(uint256 reportId) external view returns (uint256 price, uint256 settlementTimestamp) {
         ReportStatus storage status = reportStatus[reportId];
-        if (!status.isSettled) revert ReportNotSettled();
+        if (!status.isSettled) revert AlreadyProcessed("not settled");
         return (status.price, status.settlementTimestamp);
     }
 
@@ -254,11 +243,11 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         uint256 protocolFee,
         uint256 settlerReward
     ) external payable returns (uint256 reportId) {
-        if (msg.value <= 100) revert InsufficientFee();
-        if (exactToken1Report == 0) revert InvalidTokenAmount();
+        if (msg.value <= 100) revert InsufficientAmount("fee");
+        if (exactToken1Report == 0) revert InvalidInput("token amount");
         if (token1Address == token2Address) revert TokensCannotBeSame();
-        if (settlementTime <= disputeDelay) revert InvalidSettlementTime();
-        if (msg.value <= settlerReward) revert InsufficientFeeForSettlerReward();
+        if (settlementTime <= disputeDelay) revert InvalidTiming("settlement vs dispute delay");
+        if (msg.value <= settlerReward) revert InsufficientAmount("settler reward fee");
 
         reportId = nextReportId++;
         
@@ -303,10 +292,10 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         ReportMeta storage meta = reportMeta[reportId];
         ReportStatus storage status = reportStatus[reportId];
 
-        if (reportId > nextReportId) revert InvalidReportId();
-        if (status.currentReporter != address(0)) revert ReportAlreadySubmitted();
-        if (amount1 != meta.exactToken1Report) revert InvalidTokenAmount();
-        if (amount2 == 0) revert InvalidTokenAmount();
+        if (reportId > nextReportId) revert InvalidInput("report id");
+        if (status.currentReporter != address(0)) revert AlreadyProcessed("report submitted");
+        if (amount1 != meta.exactToken1Report) revert InvalidInput("token1 amount");
+        if (amount2 == 0) revert InvalidInput("token2 amount");
 
         _transferTokens(meta.token1, msg.sender, address(this), amount1);
         _transferTokens(meta.token2, msg.sender, address(this), amount2);
@@ -351,7 +340,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         } else if (tokenToSwap == meta.token2) {
             _handleToken2Swap(meta, status, newAmount2);
         } else {
-            revert InvalidTokenToSwap();
+            revert InvalidInput("token to swap");
         }
 
         // Update the report status after the dispute and swap
@@ -389,15 +378,15 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         ReportMeta storage meta,
         ReportStatus storage status
     ) internal view {
-        if (reportId > nextReportId) revert InvalidReportId();
-        if (newAmount1 == 0 || newAmount2 == 0) revert InvalidTokenAmount();
+        if (reportId > nextReportId) revert InvalidInput("report id");
+        if (newAmount1 == 0 || newAmount2 == 0) revert InvalidInput("token amounts");
         if (status.currentReporter == address(0)) revert NoReportToDispute();
-        if (block.timestamp > status.reportTimestamp + meta.settlementTime) revert DisputePeriodExpired();
-        if (status.isSettled) revert ReportAlreadySettled();
-        if (status.isDistributed) revert ReportAlreadyDistributed();
-        if (tokenToSwap != meta.token1 && tokenToSwap != meta.token2) revert InvalidTokenToSwap();
+        if (block.timestamp > status.reportTimestamp + meta.settlementTime) revert InvalidTiming("dispute period expired");
+        if (status.isSettled) revert AlreadyProcessed("report settled");
+        if (status.isDistributed) revert AlreadyProcessed("report distributed");
+        if (tokenToSwap != meta.token1 && tokenToSwap != meta.token2) revert InvalidInput("token to swap");
         if (status.lastDisputeBlock == _getBlockNumber()) revert DisputeAlreadyInBlock();
-        if (block.timestamp < status.reportTimestamp + meta.disputeDelay) revert DisputeTooEarly();
+        if (block.timestamp < status.reportTimestamp + meta.disputeDelay) revert InvalidTiming("dispute too early");
 
         uint256 oldAmount1 = status.currentAmount1;
         uint256 expectedAmount1;
@@ -410,9 +399,9 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         
         if (newAmount1 != expectedAmount1) {
             if (meta.escalationHalt <= oldAmount1) {
-                revert EscalationHalted();
+                revert OutOfBounds("escalation halted");
             } else {
-                revert InvalidNewAmount();
+                revert InvalidInput("new amount");
             }
         }
 
@@ -423,7 +412,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         uint256 newPrice = (newAmount1 * PRICE_PRECISION) / newAmount2;
         
         if (newPrice >= lowerBoundary && newPrice <= upperBoundary) {
-            revert NewPriceWithinBoundaries();
+            revert OutOfBounds("price within boundaries");
         }
     }
 
