@@ -72,6 +72,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         bool isSettled;
         bool disputeOccurred;
         bool isDistributed;
+        uint256 initialReportTimestamp;
     }
 
     // Events
@@ -294,6 +295,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         status.currentReporter = payable(msg.sender);
         status.initialReporter = payable(msg.sender);
         status.reportTimestamp = block.timestamp;
+        status.initialReportTimestamp = block.timestamp;
         status.price = (amount1 * PRICE_PRECISION) / amount2;
 
         emit InitialReportSubmitted(
