@@ -12,3 +12,16 @@ docs/
 
 # Dotenv file
 .env
+
+# Hardhat 
+node_modules
+/cache
+/artifacts
+
+# TypeChain files
+/typechain
+/typechain-types
+
+# solidity-coverage files
+/coverage
+/coverage.json
