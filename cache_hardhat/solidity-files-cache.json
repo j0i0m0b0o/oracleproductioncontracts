@@ -513,6 +513,48 @@
       "artifacts": [
         "IOpenOracle"
       ]
+    },
+    "/home/beskay/development/openOracle/oracleproductioncontracts/src/OracleSwapFacility.sol": {
+      "lastModificationDate": 1752413033581,
+      "contentHash": "9a56dbc476d0d5652b3caa250e590e06",
+      "sourceName": "src/OracleSwapFacility.sol",
+      "solcConfig": {
+        "version": "0.8.28",
+        "settings": {
+          "viaIR": true,
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/token/ERC20/IERC20.sol",
+        "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol",
+        "@openzeppelin/contracts/utils/ReentrancyGuard.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.26"
+      ],
+      "artifacts": [
+        "IOpenOracle",
+        "OracleSwapFacility"
+      ]
     }
   }
 }
