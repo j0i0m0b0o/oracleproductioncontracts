@@ -38,6 +38,8 @@ contract OpenOracle is ReentrancyGuard, Ownable {
     uint256 public constant MULTIPLIER_PRECISION = 100;
     uint256 public constant SETTLEMENT_WINDOW = 60; // 60 seconds for testing
     uint256 public constant SETTLEMENT_WINDOW_BLOCKS = 1350; // 5 minutes @ 4.5 blocks per second on Arbitrum
+    uint256 internal constant ARBITRUM_CHAIN_ID = 0xa4b1;
+    address internal constant ARB_SYS_ADDRESS = 0x0000000000000000000000000000000000000064;
 
     // State variables
     uint256 public nextReportId = 1;
@@ -200,7 +202,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
      * @param newRecipient The new protocol fee recipient address
      */
     function updateProtocolFeeRecipient(address newRecipient) external onlyOwner {
-        require(newRecipient != address(0), "Invalid recipient address");
+        if (newRecipient == address(0)) revert InvalidInput("recipient address");
         address oldRecipient = protocolFeeRecipient;
         protocolFeeRecipient = newRecipient;
         emit ProtocolFeeRecipientUpdated(oldRecipient, newRecipient);
@@ -234,19 +236,19 @@ contract OpenOracle is ReentrancyGuard, Ownable {
      * @return settlementTimestamp The timestamp when the report was settled
      */
     function settle(uint256 reportId) external nonReentrant returns (uint256 price, uint256 settlementTimestamp) {
+        // moved this back above reverts because we read the storage variable in the if statement anyway
+        ReportStatus storage status = reportStatus[reportId];
+        ReportMeta storage meta = reportMeta[reportId];
 
-        if(reportMeta[reportId].timeType == true){
-            if (block.timestamp < reportStatus[reportId].reportTimestamp + reportMeta[reportId].settlementTime) {
+        if (meta.timeType) {
+            if (block.timestamp < status.reportTimestamp + meta.settlementTime) {
                 revert InvalidTiming("settlement");
             }
         } else {
-            if (_getBlockNumber() < reportStatus[reportId].reportTimestamp + reportMeta[reportId].settlementTime) {
+            if (_getBlockNumber() < status.reportTimestamp + meta.settlementTime) {
                 revert InvalidTiming("settlement");
             }
         }
-
-        ReportStatus storage status = reportStatus[reportId];
-        ReportMeta storage meta = reportMeta[reportId];
 
         if (status.isSettled || status.isDistributed) {
             return status.isSettled ? (status.price, status.settlementTimestamp) : (0, 0);
@@ -256,9 +258,9 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         uint256 reporterReward = meta.fee;
         bool isWithinWindow;
 
-        if(meta.timeType == true){
+        if (meta.timeType) {
             isWithinWindow = block.timestamp <= status.reportTimestamp + meta.settlementTime + SETTLEMENT_WINDOW;
-        }else{
+        } else {
             isWithinWindow = _getBlockNumber() <= status.reportTimestamp + meta.settlementTime + SETTLEMENT_WINDOW_BLOCKS;
         }
 
@@ -372,48 +374,16 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         return _createReportInstance(params);
     }
 
-//new function. full control over timeType. true = seconds, false = blocks
+    //new function. full control over timeType. true = seconds, false = blocks
+    // not backwards compatible to previous createReportInstance (different function argument order!!)
     function createReportInstance(
-        address token1Address,
-        address token2Address,
-        uint256 exactToken1Report,
-        uint16 feePercentage,
-        uint16 multiplier,
-        uint48 settlementTime,
-        uint256 escalationHalt,
-        uint16 disputeDelay,
-        uint16 protocolFee,
-        uint256 settlerReward,
-        bool timeType,
-        address callbackContract,
-        bytes4 callbackSelector,
-        bool trackDisputes,
-        uint32 callbackGasLimit,
-        bool keepFee
+        CreateReportParams calldata params
     ) external payable returns (uint256 reportId) {
-        CreateReportParams memory params = CreateReportParams({
-            token1Address: token1Address,
-            token2Address: token2Address,
-            exactToken1Report: exactToken1Report,
-            feePercentage: feePercentage,
-            multiplier: multiplier,
-            settlementTime: settlementTime,
-            escalationHalt: escalationHalt,
-            disputeDelay: disputeDelay,
-            protocolFee: protocolFee,
-            settlerReward: settlerReward,
-            timeType: timeType,
-            callbackContract: callbackContract,
-            callbackSelector: callbackSelector,
-            trackDisputes: trackDisputes,
-            callbackGasLimit: callbackGasLimit,
-            keepFee: keepFee
-        });
         return _createReportInstance(params);
     }
 
     function _createReportInstance(
-    CreateReportParams memory params
+        CreateReportParams memory params
     ) internal returns (uint256 reportId) {
         if (msg.value <= 100) revert InsufficientAmount("fee");
         if (params.exactToken1Report == 0) revert InvalidInput("token amount");
@@ -432,77 +402,63 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         meta.settlementTime = params.settlementTime;
         meta.fee = msg.value - params.settlerReward;
         meta.escalationHalt = params.escalationHalt;
-        meta.disputeDelay = uint16(params.disputeDelay);
+        meta.disputeDelay = params.disputeDelay;
         meta.protocolFee = params.protocolFee;
         meta.settlerReward = params.settlerReward;
         meta.requestBlock = _getBlockNumber();
         meta.timeType = params.timeType;
-        extraData[reportId].creator = msg.sender;
-        extraData[reportId].requestTrueTime = uint48(block.timestamp);
-        extraData[reportId].callbackContract = params.callbackContract;
-        extraData[reportId].callbackSelector = params.callbackSelector;
-        extraData[reportId].trackDisputes = params.trackDisputes;
-        extraData[reportId].callbackGasLimit = params.callbackGasLimit;
-        extraData[reportId].keepFee = params.keepFee;
 
-    {
-        address token1 = params.token1Address;
-        address token2 = params.token2Address;
-        uint256 feePercentage = params.feePercentage;
-        uint256 multiplier = params.multiplier;
-        uint256 exactToken1Report = params.exactToken1Report;
-        
-        {
-            uint256 settlementTime = params.settlementTime;
-            uint256 escalationHalt = params.escalationHalt;
-            uint256 disputeDelay = params.disputeDelay;
-            uint256 protocolFee = params.protocolFee;
-            uint256 settlerReward = params.settlerReward;
-            bool timeType = params.timeType;
+        // cache storage variable to avoid multiple storage reads
+        extraReportData storage extra = extraData[reportId];
+        extra.creator = msg.sender;
+        extra.requestTrueTime = uint48(block.timestamp);
+        extra.callbackContract = params.callbackContract;
+        extra.callbackSelector = params.callbackSelector;
+        extra.trackDisputes = params.trackDisputes;
+        extra.callbackGasLimit = params.callbackGasLimit;
+        extra.keepFee = params.keepFee;
 
         bytes32 stateHash = keccak256(abi.encodePacked(
-            keccak256(abi.encodePacked(timeType)),
-            keccak256(abi.encodePacked(settlementTime)),
-            keccak256(abi.encodePacked(disputeDelay)),
+            keccak256(abi.encodePacked(params.timeType)),
+            keccak256(abi.encodePacked(params.settlementTime)),
+            keccak256(abi.encodePacked(params.disputeDelay)),
             keccak256(abi.encodePacked(params.callbackContract)),
             keccak256(abi.encodePacked(params.callbackSelector)),
             keccak256(abi.encodePacked(params.callbackGasLimit)),
             keccak256(abi.encodePacked(params.keepFee)),
-            keccak256(abi.encodePacked(feePercentage)),
-            keccak256(abi.encodePacked(protocolFee)),
-            keccak256(abi.encodePacked(settlerReward)),
+            keccak256(abi.encodePacked(params.feePercentage)),
+            keccak256(abi.encodePacked(params.protocolFee)),
+            keccak256(abi.encodePacked(params.settlerReward)),
             keccak256(abi.encodePacked(meta.fee)),
             keccak256(abi.encodePacked(params.trackDisputes)),
             keccak256(abi.encodePacked(msg.sender))
         ));
 
-        extraData[reportId].stateHash = stateHash;
+        extra.stateHash = stateHash;
         
-            emit ReportInstanceCreated(
-                reportId,
-                token1,
-                token2,
-                feePercentage,
-                multiplier,
-                exactToken1Report,
-                msg.value,
-                msg.sender,
-                settlementTime,
-                escalationHalt,
-                disputeDelay,
-                protocolFee,
-                settlerReward,
-                timeType,
-                params.callbackContract,
-                params.callbackSelector,
-                params.trackDisputes,
-                params.callbackGasLimit,
-                params.keepFee,
-                stateHash
-            );
-        }
-    }
-
+        emit ReportInstanceCreated(
+            reportId,
+            params.token1Address,
+            params.token2Address,
+            params.feePercentage,
+            params.multiplier,
+            params.exactToken1Report,
+            msg.value,
+            msg.sender,
+            params.settlementTime,
+            params.escalationHalt,
+            params.disputeDelay,
+            params.protocolFee,
+            params.settlerReward,
+            params.timeType,
+            params.callbackContract,
+            params.callbackSelector,
+            params.trackDisputes,
+            params.callbackGasLimit,
+            params.keepFee,
+            stateHash
+        );
+        return reportId;
     }
 
     /**
@@ -562,11 +518,11 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         status.lastReportTrueTime = uint48(block.timestamp);
         status.lastDisputeBlock = _getBlockNumber();
 
-        if (extraData[reportId].trackDisputes) {
+        if (extra.trackDisputes) {
             disputeHistory[reportId][0].amount1 = amount1;
             disputeHistory[reportId][0].amount2 = amount2;
             disputeHistory[reportId][0].reportTimestamp = status.reportTimestamp;
-            extraData[reportId].numReports = 1;
+            extra.numReports = 1;
         }
 
         emit InitialReportSubmitted(
@@ -582,10 +538,10 @@ contract OpenOracle is ReentrancyGuard, Ownable {
             meta.disputeDelay,
             meta.escalationHalt,
             meta.timeType,
-            extraData[reportId].callbackContract,
-            extraData[reportId].callbackSelector,
-            extraData[reportId].trackDisputes,
-            extraData[reportId].callbackGasLimit,
+            extra.callbackContract,
+            extra.callbackSelector,
+            extra.trackDisputes,
+            extra.callbackGasLimit,
             stateHash
         );
     }
@@ -644,12 +600,12 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
         status.lastReportTrueTime = uint48(block.timestamp);
 
         if (extraData[reportId].trackDisputes) {
-            uint256 nextIndex = extraData[reportId].numReports;
+            uint32 nextIndex = extraData[reportId].numReports;
             disputeHistory[reportId][nextIndex].amount1 = newAmount1;
             disputeHistory[reportId][nextIndex].amount2 = newAmount2;
             disputeHistory[reportId][nextIndex].reportTimestamp = status.reportTimestamp;
             disputeHistory[reportId][nextIndex].tokenToSwap = tokenToSwap;
-            extraData[reportId].numReports = uint32(nextIndex + 1);
+            extraData[reportId].numReports = nextIndex + 1;
         }
 
         emit ReportDisputed(
@@ -672,7 +628,6 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
             stateHash
         );
     }
-
 
     function _preValidate(uint256 newAmount1, uint256 oldAmount1, uint256 multiplier, uint256 escalationHalt) internal pure {
 
@@ -707,11 +662,11 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
         if (reportId > nextReportId) revert InvalidInput("report id");
         if (newAmount1 == 0 || newAmount2 == 0) revert InvalidInput("token amounts");
         if (status.currentReporter == address(0)) revert NoReportToDispute();
-        if(meta.timeType == true){
+        if (meta.timeType) {
             if (block.timestamp > status.reportTimestamp + meta.settlementTime) {
                 revert InvalidTiming("dispute period expired");
             }
-        }else{
+        } else {
             if (_getBlockNumber() > status.reportTimestamp + meta.settlementTime) {
                 revert InvalidTiming("dispute period expired");
             }
@@ -721,12 +676,11 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
         if (tokenToSwap != meta.token1 && tokenToSwap != meta.token2) revert InvalidInput("token to swap");
         if(meta.timeType == true){
             if (block.timestamp < status.reportTimestamp + meta.disputeDelay) revert InvalidTiming("dispute too early");
-        }else{
+        } else {
             if (_getBlockNumber() < status.reportTimestamp + meta.disputeDelay) revert InvalidTiming("dispute too early");
         }
 
         uint256 oldAmount1 = status.currentAmount1;
-
         uint256 oldPrice = (oldAmount1 * PRICE_PRECISION) / status.currentAmount2;
         uint256 feeBoundary = (oldPrice * meta.feePercentage) / PERCENTAGE_PRECISION;
         uint256 lowerBoundary = oldPrice > feeBoundary ? oldPrice - feeBoundary : 0;
@@ -829,10 +783,7 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
             id := chainid()
         }
 
-        if (
-            id == 0xa4b1 // Arbitrum One chain ID
-        ) {
-            address ARB_SYS_ADDRESS = 0x0000000000000000000000000000000000000064;
+        if (id == ARBITRUM_CHAIN_ID) {
             (bool success, bytes memory data) = ARB_SYS_ADDRESS.staticcall(abi.encodeWithSignature("arbBlockNumber()"));
             if (!success) revert CallToArbSysFailed();
             return uint48(abi.decode(data, (uint256)));
@@ -840,5 +791,4 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
 
         return uint48(block.number);
     }
-
 }
