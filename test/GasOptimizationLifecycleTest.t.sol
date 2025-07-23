@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import "forge-std/Test.sol";
-import "../oraclegasoptimization.sol";
+import "src/oraclegasoptimization.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract MockERC20 is ERC20 {
@@ -75,12 +75,12 @@ contract GasOptimizationLifecycleTest is Test {
             address(token1), 
             address(token2), 
             1e18,            // exactToken1Report
-            uint24(3000),    // feePercentage (3 bps)
+            uint16(3000),    // feePercentage (3 bps)
             uint16(110),     // multiplier (1.1x)
             uint48(300),     // settlementTime (5 minutes)
             10e18,           // escalationHalt
-            uint48(5),       // disputeDelay (5 seconds)
-            uint24(1000),    // protocolFee (1 bps)
+            uint16(5),       // disputeDelay (5 seconds)
+            uint16(1000),    // protocolFee (1 bps)
             SETTLER_REWARD,
             true,            // timeType (use timestamps)
             address(0),      // no callback

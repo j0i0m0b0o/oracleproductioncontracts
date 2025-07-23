@@ -120,7 +120,7 @@ contract OracleTest is Test {
         assertGt(address(this).balance, balanceBefore);
         
         // Check report is marked as settled
-        (,,,,,, uint256 reportPrice,, bool isSettled,,) = oracle.reportStatus(reportId);
+        (,,,,,, uint256 reportPrice,, bool isSettled,,,) = oracle.reportStatus(reportId);
         assertTrue(isSettled);
         assertEq(reportPrice, price);
     }
@@ -143,7 +143,7 @@ contract OracleTest is Test {
         assertGt(address(this).balance, balanceBefore);
         
         // Check report is not marked as settled
-        (,,,,,, uint256 reportPrice,, bool isSettled,,) = oracle.reportStatus(reportId);
+        (,,,,,, uint256 reportPrice,, bool isSettled,,,) = oracle.reportStatus(reportId);
         assertFalse(isSettled);
         // The price is still stored from the initial report, but the report is not marked as settled
         assertGt(reportPrice, 0);
@@ -195,7 +195,7 @@ contract OracleTest is Test {
         oracle.disputeAndSwap(reportId, address(weth), newAmount1, newAmount2);
 
         // Check dispute was recorded
-        (,, address currentReporter,,,,,, bool isSettled, bool disputeOccurred,) = oracle.reportStatus(reportId);
+        (,, address currentReporter,,,,,, bool isSettled, bool disputeOccurred,,) = oracle.reportStatus(reportId);
         assertEq(currentReporter, address(this));
         assertTrue(disputeOccurred);
         assertFalse(isSettled);
@@ -224,7 +224,7 @@ contract OracleTest is Test {
         oracle.disputeAndSwap(reportId, address(usdt), newAmount1, newAmount2);
 
         // Check dispute was recorded
-        (,,,,,,,, /* bool isSettled */, bool disputeOccurred,) = oracle.reportStatus(reportId);
+        (,,,,,,,, /* bool isSettled */, bool disputeOccurred,,) = oracle.reportStatus(reportId);
         assertTrue(disputeOccurred);
     }
 

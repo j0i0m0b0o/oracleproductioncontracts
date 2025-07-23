@@ -41,6 +41,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
 
     // State variables
     uint256 public nextReportId = 1;
+    uint256 public accruedProtocolFees;
     address public protocolFeeRecipient;
 
     mapping(uint256 => ReportMeta) public reportMeta;
@@ -75,14 +76,14 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         uint256 fee;                 
         uint256 settlerReward;       
         address token1;              
-        address token2;              
         uint48 requestBlock;         
-        bool timeType;               
         uint48 settlementTime;       
-        uint48 disputeDelay;         
-        uint24 feePercentage;        
-        uint24 protocolFee;          
+        address token2;              
+        bool timeType;               
+        uint16 feePercentage;    // max possible feePercentage = 10000 (100 %), uint16 = 65535  
+        uint16 protocolFee;    // max possible protocolFee = 10000 (100 %)
         uint16 multiplier;           
+        uint16 disputeDelay;   // uint16 = max dispute delay = 65535 seconds (approx. 18 hours)
     }
 
     struct ReportStatus {
@@ -108,14 +109,14 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         address token1Address;      
         address token2Address;      
         uint48 settlementTime;      
-        uint48 disputeDelay;        
+        uint16 disputeDelay;    
+        uint16 protocolFee;         
+        uint16 multiplier;          
         address callbackContract;   
         uint32 callbackGasLimit;    
+        uint16 feePercentage;       
         bytes4 callbackSelector;    
-        uint24 feePercentage;       
-        bool timeType;              
-        uint24 protocolFee;         
-        uint16 multiplier;          
+        bool timeType;                  
         bool trackDisputes;         
         bool keepFee;               
     }
@@ -217,6 +218,15 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         }
     }
 
+    function getETHProtocolFees() external nonReentrant {
+        uint256 amount = accruedProtocolFees;
+        if (amount > 0) {
+            accruedProtocolFees = 0;
+            (bool success, ) = protocolFeeRecipient.call{value: amount}("");
+            if (!success) revert EthTransferFailed();
+        }
+    }
+
     /**
      * @notice Settles a report after the settlement time has elapsed
      * @param reportId The unique identifier for the report to settle
@@ -229,7 +239,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
             if (block.timestamp < reportStatus[reportId].reportTimestamp + reportMeta[reportId].settlementTime) {
                 revert InvalidTiming("settlement");
             }
-        }else{
+        } else {
             if (_getBlockNumber() < reportStatus[reportId].reportTimestamp + reportMeta[reportId].settlementTime) {
                 revert InvalidTiming("settlement");
             }
@@ -258,44 +268,47 @@ contract OpenOracle is ReentrancyGuard, Ownable {
             emit ReportSettled(reportId, status.price, status.settlementTimestamp);
         }
 
-        _sendEth(payable(msg.sender), settlerReward);
+        // this is moved above all external calls (Check effect interaction pattern)
+        status.isDistributed = true;
+
+        extraReportData storage extra = extraData[reportId];
+
+        if (extra.callbackContract != address(0) && extra.callbackSelector != bytes4(0)) {
+            // Prepare callback data
+            bytes memory callbackData = abi.encodeWithSelector(
+                extra.callbackSelector,
+                reportId,
+                status.price,
+                status.settlementTimestamp,
+                meta.token1,
+                meta.token2
+            );
+            
+            // Execute callback with gas limit. Revert if not enough gas supplied to attempt callback fully.
+            // Using low-level call to handle failures gracefully
+            if (gasleft() < ((64 * extra.callbackGasLimit + 62) / 63) + 100000) revert InvalidGasLimit();
+            (bool success, ) = extra.callbackContract.call{gas: extra.callbackGasLimit}(callbackData);
+            
+            // Emit event regardless of bool success
+            emit SettlementCallbackExecuted(reportId, extra.callbackContract, success);
+        }
+
+        // other external calls moved below (check-effect-interaction pattern)
 
         if (status.disputeOccurred) {
             if (extraData[reportId].keepFee){
-            _sendEth(status.initialReporter, reporterReward);
+                _sendEth(status.initialReporter, reporterReward); 
             }else{
-            _sendEth(payable(protocolFeeRecipient), reporterReward);
+                accruedProtocolFees += reporterReward;
             }
         } else {
             _sendEth(status.initialReporter, reporterReward);
         }
-
+        
         _transferTokens(meta.token1, address(this), status.currentReporter, status.currentAmount1);
         _transferTokens(meta.token2, address(this), status.currentReporter, status.currentAmount2);
-
-        status.isDistributed = true;
-
-    extraReportData storage extra = extraData[reportId];
-    if (extra.callbackContract != address(0) && extra.callbackSelector != bytes4(0)) {
-        // Prepare callback data
-        bytes memory callbackData = abi.encodeWithSelector(
-            extra.callbackSelector,
-            reportId,
-            status.price,
-            status.settlementTimestamp,
-            meta.token1,
-            meta.token2
-        );
         
-        // Execute callback with gas limit. Revert if not enough gas supplied to attempt callback fully.
-        // Using low-level call to handle failures gracefully
-        if (gasleft() < ((64 * extra.callbackGasLimit + 62) / 63) + 100000) revert InvalidGasLimit();
-        (bool success, ) = extra.callbackContract.call{gas: extra.callbackGasLimit}(callbackData);
-        
-        // Emit event regardless of bool success
-        emit SettlementCallbackExecuted(reportId, extra.callbackContract, success);
-    }
-
+        _sendEth(payable(msg.sender), settlerReward);
 
         return status.isSettled ? (status.price, status.settlementTimestamp) : (0, 0);
     }
@@ -330,12 +343,12 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         address token1Address,
         address token2Address,
         uint256 exactToken1Report,
-        uint24 feePercentage,
+        uint16 feePercentage,
         uint16 multiplier,
         uint48 settlementTime,
         uint256 escalationHalt,
-        uint48 disputeDelay,
-        uint24 protocolFee,
+        uint16 disputeDelay,
+        uint16 protocolFee,
         uint256 settlerReward
     ) external payable returns (uint256 reportId) {
         CreateReportParams memory params = CreateReportParams({
@@ -364,12 +377,12 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         address token1Address,
         address token2Address,
         uint256 exactToken1Report,
-        uint24 feePercentage,
+        uint16 feePercentage,
         uint16 multiplier,
         uint48 settlementTime,
         uint256 escalationHalt,
-        uint48 disputeDelay,
-        uint24 protocolFee,
+        uint16 disputeDelay,
+        uint16 protocolFee,
         uint256 settlerReward,
         bool timeType,
         address callbackContract,
@@ -419,7 +432,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         meta.settlementTime = params.settlementTime;
         meta.fee = msg.value - params.settlerReward;
         meta.escalationHalt = params.escalationHalt;
-        meta.disputeDelay = params.disputeDelay;
+        meta.disputeDelay = uint16(params.disputeDelay);
         meta.protocolFee = params.protocolFee;
         meta.settlerReward = params.settlerReward;
         meta.requestBlock = _getBlockNumber();
@@ -736,9 +749,6 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
 
         protocolFees[meta.token1] += protocolFee;
 
-        IERC20(meta.token1).safeTransferFrom(msg.sender, address(this), oldAmount1 + fee + protocolFee);
-        IERC20(meta.token1).safeTransfer(status.currentReporter, 2 * oldAmount1 + fee);
-
         uint256 requiredToken1Contribution =
             meta.escalationHalt > oldAmount1 ? (oldAmount1 * meta.multiplier) / MULTIPLIER_PRECISION : oldAmount1 + 1;
 
@@ -746,14 +756,15 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
         uint256 netToken2Receive = newAmount2 < oldAmount2 ? oldAmount2 - newAmount2 : 0;
 
         if (netToken2Contribution > 0) {
-            IERC20(meta.token2).safeTransferFrom(msg.sender, address(this), netToken2Contribution);
+            IERC20(meta.token2).safeTransferFrom(msg.sender, address(this), netToken2Contribution); 
         }
 
         if (netToken2Receive > 0) {
             IERC20(meta.token2).safeTransfer(msg.sender, netToken2Receive);
         }
 
-        IERC20(meta.token1).safeTransferFrom(msg.sender, address(this), requiredToken1Contribution);
+        IERC20(meta.token1).safeTransferFrom(msg.sender, address(this), requiredToken1Contribution + oldAmount1 + fee + protocolFee);
+        IERC20(meta.token1).safeTransfer(status.currentReporter, 2 * oldAmount1 + fee);
     }
 
     /**
@@ -767,9 +778,6 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
 
         protocolFees[meta.token2] += protocolFee;
 
-        IERC20(meta.token2).safeTransferFrom(msg.sender, address(this), oldAmount2 + fee + protocolFee);
-        IERC20(meta.token2).safeTransfer(status.currentReporter, 2 * oldAmount2 + fee);
-
         uint256 requiredToken1Contribution =
             meta.escalationHalt > oldAmount1 ? (oldAmount1 * meta.multiplier) / MULTIPLIER_PRECISION : oldAmount1 +1;
 
@@ -780,14 +788,17 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
             IERC20(meta.token1).safeTransferFrom(msg.sender, address(this), netToken1Contribution);
         }
 
-        IERC20(meta.token2).safeTransferFrom(msg.sender, address(this), newAmount2);
+        IERC20(meta.token2).safeTransferFrom(msg.sender, address(this), newAmount2 + oldAmount2 + fee + protocolFee);
+        IERC20(meta.token2).safeTransfer(status.currentReporter, 2 * oldAmount2 + fee);
     }
 
     /**
      * @dev Internal function to handle token transfers
      */
     function _transferTokens(address token, address from, address to, uint256 amount) internal {
-        if (from == address(this)) {
+        if (amount == 0) return; // Gas optimization: skip zero transfers
+
+        if (from == address(this)) { 
             IERC20(token).safeTransfer(to, amount);
         } else {
             IERC20(token).safeTransferFrom(from, to, amount);
@@ -798,6 +809,8 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
      * @dev Internal function to send ETH to a recipient
      */
     function _sendEth(address payable recipient, uint256 amount) internal {
+        if (amount == 0) return; // Gas optimization: skip zero transfers
+
         (bool success,) = recipient.call{value: amount}("");
         if (!success){
             (bool success2,) = payable(address(0)).call{value: amount}("");
