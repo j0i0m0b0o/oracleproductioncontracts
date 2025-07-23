@@ -52,7 +52,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
     mapping(uint256 => extraReportData) public extraData;
     mapping(uint256 => mapping(uint256 => disputeRecord)) public disputeHistory;
 
-    struct disputeRecord{
+    struct disputeRecord {
         uint256 amount1;
         uint256 amount2;
         address tokenToSwap;
@@ -60,70 +60,70 @@ contract OpenOracle is ReentrancyGuard, Ownable {
     }
 
     struct extraReportData {
-        bytes32 stateHash;         
-        address creator;           
-        uint48 requestTrueTime;    
-        uint32 numReports;         
-        address callbackContract;  
-        uint32 callbackGasLimit;   
-        bytes4 callbackSelector;   
-        bool trackDisputes;        
-        bool keepFee;              
+        bytes32 stateHash;
+        address creator;
+        uint48 requestTrueTime;
+        uint32 numReports;
+        address callbackContract;
+        uint32 callbackGasLimit;
+        bytes4 callbackSelector;
+        bool trackDisputes;
+        bool keepFee;
     }
 
     // Type declarations
     struct ReportMeta {
-        uint256 exactToken1Report;   
-        uint256 escalationHalt;      
-        uint256 fee;                 
-        uint256 settlerReward;       
-        address token1;              
-        uint48 requestBlock;         
-        uint48 settlementTime;       
-        address token2;              
-        bool timeType;               
+        uint256 exactToken1Report;
+        uint256 escalationHalt;
+        uint256 fee;
+        uint256 settlerReward;
+        address token1;
+        uint48 requestBlock;
+        uint48 settlementTime;
+        address token2;
+        bool timeType;
         uint24 feePercentage;
         uint24 protocolFee;
-        uint16 multiplier;           
+        uint16 multiplier;
         uint24 disputeDelay;
     }
 
     struct ReportStatus {
-        uint256 currentAmount1;         
-        uint256 currentAmount2;         
-        uint256 price;                  
+        uint256 currentAmount1;
+        uint256 currentAmount2;
+        uint256 price;
         address payable currentReporter;
-        uint48 reportTimestamp;         
-        uint48 settlementTimestamp;     
+        uint48 reportTimestamp;
+        uint48 settlementTimestamp;
         address payable initialReporter;
-        uint48 initialReportTimestamp;  
-        uint48 lastReportTrueTime;      
-        bool isSettled;                 
-        bool disputeOccurred;           
-        bool isDistributed;             
+        uint48 initialReportTimestamp;
+        uint48 lastReportTrueTime;
+        bool isSettled;
+        bool disputeOccurred;
+        bool isDistributed;
     }
 
     struct CreateReportParams {
-        uint256 exactToken1Report;  
-        uint256 escalationHalt;     
-        uint256 settlerReward;      
-        address token1Address;      
-        uint48 settlementTime;      
-        uint24 disputeDelay;    
-        uint24 protocolFee;         
-        address token2Address;      
-        uint32 callbackGasLimit;    
-        uint24 feePercentage;       
-        uint16 multiplier;          
-        bool timeType;                  
-        bool trackDisputes;         
-        bool keepFee;               
-        address callbackContract;   
-        bytes4 callbackSelector;    
+        uint256 exactToken1Report;
+        uint256 escalationHalt;
+        uint256 settlerReward;
+        address token1Address;
+        uint48 settlementTime;
+        uint24 disputeDelay;
+        uint24 protocolFee;
+        address token2Address;
+        uint32 callbackGasLimit;
+        uint24 feePercentage;
+        uint16 multiplier;
+        bool timeType;
+        bool trackDisputes;
+        bool keepFee;
+        address callbackContract;
+        bytes4 callbackSelector;
     }
 
     // Events
-    event ReportInstanceCreated(
+    event ReportInstanceCreated( // if initial reporter loses reward when swapped against
         uint256 indexed reportId,
         address indexed token1Address,
         address indexed token2Address,
@@ -142,7 +142,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         bytes4 callbackSelector,
         bool trackDisputes,
         uint256 callbackGasLimit,
-        bool keepFee, // if initial reporter loses reward when swapped against
+        bool keepFee,
         bytes32 stateHash
     );
 
@@ -223,7 +223,7 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         uint256 amount = accruedProtocolFees;
         if (amount > 0) {
             accruedProtocolFees = 0;
-            (bool success, ) = protocolFeeRecipient.call{value: amount}("");
+            (bool success,) = protocolFeeRecipient.call{value: amount}("");
             if (!success) revert EthTransferFailed();
         }
     }
@@ -260,7 +260,8 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         if (meta.timeType) {
             isWithinWindow = block.timestamp <= status.reportTimestamp + meta.settlementTime + SETTLEMENT_WINDOW;
         } else {
-            isWithinWindow = _getBlockNumber() <= status.reportTimestamp + meta.settlementTime + SETTLEMENT_WINDOW_BLOCKS;
+            isWithinWindow =
+                _getBlockNumber() <= status.reportTimestamp + meta.settlementTime + SETTLEMENT_WINDOW_BLOCKS;
         }
 
         if (isWithinWindow) {
@@ -277,19 +278,14 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         if (extra.callbackContract != address(0) && extra.callbackSelector != bytes4(0)) {
             // Prepare callback data
             bytes memory callbackData = abi.encodeWithSelector(
-                extra.callbackSelector,
-                reportId,
-                status.price,
-                status.settlementTimestamp,
-                meta.token1,
-                meta.token2
+                extra.callbackSelector, reportId, status.price, status.settlementTimestamp, meta.token1, meta.token2
             );
-            
+
             // Execute callback with gas limit. Revert if not enough gas supplied to attempt callback fully.
             // Using low-level call to handle failures gracefully
             if (gasleft() < ((64 * extra.callbackGasLimit + 62) / 63) + 100000) revert InvalidGasLimit();
-            (bool success, ) = extra.callbackContract.call{gas: extra.callbackGasLimit}(callbackData);
-            
+            (bool success,) = extra.callbackContract.call{gas: extra.callbackGasLimit}(callbackData);
+
             // Emit event regardless of bool success
             emit SettlementCallbackExecuted(reportId, extra.callbackContract, success);
         }
@@ -297,18 +293,18 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         // other external calls moved below (check-effect-interaction pattern)
 
         if (status.disputeOccurred) {
-            if (extraData[reportId].keepFee){
-                _sendEth(status.initialReporter, reporterReward); 
-            }else{
+            if (extraData[reportId].keepFee) {
+                _sendEth(status.initialReporter, reporterReward);
+            } else {
                 accruedProtocolFees += reporterReward;
             }
         } else {
             _sendEth(status.initialReporter, reporterReward);
         }
-        
+
         _transferTokens(meta.token1, address(this), status.currentReporter, status.currentAmount1);
         _transferTokens(meta.token2, address(this), status.currentReporter, status.currentAmount2);
-        
+
         _sendEth(payable(msg.sender), settlerReward);
 
         return status.isSettled ? (status.price, status.settlementTimestamp) : (0, 0);
@@ -375,15 +371,11 @@ contract OpenOracle is ReentrancyGuard, Ownable {
 
     //new function. full control over timeType. true = seconds, false = blocks
     // not backwards compatible to previous createReportInstance (different function argument order!!)
-    function createReportInstance(
-        CreateReportParams calldata params
-    ) external payable returns (uint256 reportId) {
+    function createReportInstance(CreateReportParams calldata params) external payable returns (uint256 reportId) {
         return _createReportInstance(params);
     }
 
-    function _createReportInstance(
-        CreateReportParams memory params
-    ) internal returns (uint256 reportId) {
+    function _createReportInstance(CreateReportParams memory params) internal returns (uint256 reportId) {
         if (msg.value <= 100) revert InsufficientAmount("fee");
         if (params.exactToken1Report == 0) revert InvalidInput("token amount");
         if (params.token1Address == params.token2Address) revert TokensCannotBeSame();
@@ -417,24 +409,26 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         extra.callbackGasLimit = params.callbackGasLimit;
         extra.keepFee = params.keepFee;
 
-        bytes32 stateHash = keccak256(abi.encodePacked(
-            keccak256(abi.encodePacked(params.timeType)),
-            keccak256(abi.encodePacked(params.settlementTime)),
-            keccak256(abi.encodePacked(params.disputeDelay)),
-            keccak256(abi.encodePacked(params.callbackContract)),
-            keccak256(abi.encodePacked(params.callbackSelector)),
-            keccak256(abi.encodePacked(params.callbackGasLimit)),
-            keccak256(abi.encodePacked(params.keepFee)),
-            keccak256(abi.encodePacked(params.feePercentage)),
-            keccak256(abi.encodePacked(params.protocolFee)),
-            keccak256(abi.encodePacked(params.settlerReward)),
-            keccak256(abi.encodePacked(meta.fee)),
-            keccak256(abi.encodePacked(params.trackDisputes)),
-            keccak256(abi.encodePacked(msg.sender))
-        ));
+        bytes32 stateHash = keccak256(
+            abi.encodePacked(
+                keccak256(abi.encodePacked(params.timeType)),
+                keccak256(abi.encodePacked(params.settlementTime)),
+                keccak256(abi.encodePacked(params.disputeDelay)),
+                keccak256(abi.encodePacked(params.callbackContract)),
+                keccak256(abi.encodePacked(params.callbackSelector)),
+                keccak256(abi.encodePacked(params.callbackGasLimit)),
+                keccak256(abi.encodePacked(params.keepFee)),
+                keccak256(abi.encodePacked(params.feePercentage)),
+                keccak256(abi.encodePacked(params.protocolFee)),
+                keccak256(abi.encodePacked(params.settlerReward)),
+                keccak256(abi.encodePacked(meta.fee)),
+                keccak256(abi.encodePacked(params.trackDisputes)),
+                keccak256(abi.encodePacked(msg.sender))
+            )
+        );
 
         extra.stateHash = stateHash;
-        
+
         emit ReportInstanceCreated(
             reportId,
             params.token1Address,
@@ -480,7 +474,13 @@ contract OpenOracle is ReentrancyGuard, Ownable {
      * @dev Tokens are pulled from msg.sender but will be returned to reporter address
      * @dev This overload enables contracts to submit reports on behalf of users
      */
-    function submitInitialReport(uint256 reportId, uint256 amount1, uint256 amount2, bytes32 stateHash, address reporter) external {
+    function submitInitialReport(
+        uint256 reportId,
+        uint256 amount1,
+        uint256 amount2,
+        bytes32 stateHash,
+        address reporter
+    ) external {
         _submitInitialReport(reportId, amount1, amount2, stateHash, reporter);
     }
 
@@ -491,8 +491,13 @@ contract OpenOracle is ReentrancyGuard, Ownable {
      * @param amount2 Amount of token2 for the price ratio
      * @param reporter The address that will receive tokens back when settled
      */
-    function _submitInitialReport(uint256 reportId, uint256 amount1, uint256 amount2, bytes32 stateHash, address reporter) internal {
-
+    function _submitInitialReport(
+        uint256 reportId,
+        uint256 amount1,
+        uint256 amount2,
+        bytes32 stateHash,
+        address reporter
+    ) internal {
         if (reportStatus[reportId].currentReporter != address(0)) revert AlreadyProcessed("report submitted");
 
         ReportMeta storage meta = reportMeta[reportId];
@@ -544,21 +549,30 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         );
     }
 
-//backwards-compatible function
-function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount1, uint256 newAmount2, uint256 amt2Expected, bytes32 stateHash)
-    external
-    nonReentrant
-{
-    _disputeAndSwap(reportId, tokenToSwap, newAmount1, newAmount2, msg.sender, amt2Expected, stateHash);
-}
+    //backwards-compatible function
+    function disputeAndSwap(
+        uint256 reportId,
+        address tokenToSwap,
+        uint256 newAmount1,
+        uint256 newAmount2,
+        uint256 amt2Expected,
+        bytes32 stateHash
+    ) external nonReentrant {
+        _disputeAndSwap(reportId, tokenToSwap, newAmount1, newAmount2, msg.sender, amt2Expected, stateHash);
+    }
 
-//new function. disputer address receives the money back, so you can call dispute with your own tokens through insurance smart contracts or other smart contracts if necessary.
-function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount1, uint256 newAmount2, address disputer, uint256 amt2Expected, bytes32 stateHash)
-    external
-    nonReentrant
-{
-    _disputeAndSwap(reportId, tokenToSwap, newAmount1, newAmount2, disputer, amt2Expected, stateHash);
-}
+    //new function. disputer address receives the money back, so you can call dispute with your own tokens through insurance smart contracts or other smart contracts if necessary.
+    function disputeAndSwap(
+        uint256 reportId,
+        address tokenToSwap,
+        uint256 newAmount1,
+        uint256 newAmount2,
+        address disputer,
+        uint256 amt2Expected,
+        bytes32 stateHash
+    ) external nonReentrant {
+        _disputeAndSwap(reportId, tokenToSwap, newAmount1, newAmount2, disputer, amt2Expected, stateHash);
+    }
 
     /**
      * @notice Disputes an existing report and swaps tokens to update the price
@@ -567,11 +581,22 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
      * @param newAmount1 New amount of token1 after the dispute
      * @param newAmount2 New amount of token2 after the dispute
      */
-    function _disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount1, uint256 newAmount2, address disputer, uint256 amt2Expected, bytes32 stateHash)
-        internal
-    {
-        _preValidate(newAmount1, reportStatus[reportId].currentAmount1, reportMeta[reportId].multiplier, reportMeta[reportId].escalationHalt);
-        
+    function _disputeAndSwap(
+        uint256 reportId,
+        address tokenToSwap,
+        uint256 newAmount1,
+        uint256 newAmount2,
+        address disputer,
+        uint256 amt2Expected,
+        bytes32 stateHash
+    ) internal {
+        _preValidate(
+            newAmount1,
+            reportStatus[reportId].currentAmount1,
+            reportMeta[reportId].multiplier,
+            reportMeta[reportId].escalationHalt
+        );
+
         ReportMeta storage meta = reportMeta[reportId];
         ReportStatus storage status = reportStatus[reportId];
 
@@ -626,8 +651,10 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
         );
     }
 
-    function _preValidate(uint256 newAmount1, uint256 oldAmount1, uint256 multiplier, uint256 escalationHalt) internal pure {
-
+    function _preValidate(uint256 newAmount1, uint256 oldAmount1, uint256 multiplier, uint256 escalationHalt)
+        internal
+        pure
+    {
         uint256 expectedAmount1;
 
         if (escalationHalt > oldAmount1) {
@@ -671,10 +698,12 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
         if (status.isSettled) revert AlreadyProcessed("report settled");
         if (status.isDistributed) revert AlreadyProcessed("report distributed");
         if (tokenToSwap != meta.token1 && tokenToSwap != meta.token2) revert InvalidInput("token to swap");
-        if(meta.timeType == true){
+        if (meta.timeType == true) {
             if (block.timestamp < status.reportTimestamp + meta.disputeDelay) revert InvalidTiming("dispute too early");
         } else {
-            if (_getBlockNumber() < status.reportTimestamp + meta.disputeDelay) revert InvalidTiming("dispute too early");
+            if (_getBlockNumber() < status.reportTimestamp + meta.disputeDelay) {
+                revert InvalidTiming("dispute too early");
+            }
         }
 
         uint256 oldAmount1 = status.currentAmount1;
@@ -707,14 +736,16 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
         uint256 netToken2Receive = newAmount2 < oldAmount2 ? oldAmount2 - newAmount2 : 0;
 
         if (netToken2Contribution > 0) {
-            IERC20(meta.token2).safeTransferFrom(msg.sender, address(this), netToken2Contribution); 
+            IERC20(meta.token2).safeTransferFrom(msg.sender, address(this), netToken2Contribution);
         }
 
         if (netToken2Receive > 0) {
             IERC20(meta.token2).safeTransfer(msg.sender, netToken2Receive);
         }
 
-        IERC20(meta.token1).safeTransferFrom(msg.sender, address(this), requiredToken1Contribution + oldAmount1 + fee + protocolFee);
+        IERC20(meta.token1).safeTransferFrom(
+            msg.sender, address(this), requiredToken1Contribution + oldAmount1 + fee + protocolFee
+        );
         IERC20(meta.token1).safeTransfer(status.currentReporter, 2 * oldAmount1 + fee);
     }
 
@@ -730,7 +761,7 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
         protocolFees[meta.token2] += protocolFee;
 
         uint256 requiredToken1Contribution =
-            meta.escalationHalt > oldAmount1 ? (oldAmount1 * meta.multiplier) / MULTIPLIER_PRECISION : oldAmount1 +1;
+            meta.escalationHalt > oldAmount1 ? (oldAmount1 * meta.multiplier) / MULTIPLIER_PRECISION : oldAmount1 + 1;
 
         uint256 netToken1Contribution =
             requiredToken1Contribution > (oldAmount1) ? requiredToken1Contribution - (oldAmount1) : 0;
@@ -749,7 +780,7 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
     function _transferTokens(address token, address from, address to, uint256 amount) internal {
         if (amount == 0) return; // Gas optimization: skip zero transfers
 
-        if (from == address(this)) { 
+        if (from == address(this)) {
             IERC20(token).safeTransfer(to, amount);
         } else {
             IERC20(token).safeTransferFrom(from, to, amount);
@@ -763,9 +794,9 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
         if (amount == 0) return; // Gas optimization: skip zero transfers
 
         (bool success,) = recipient.call{value: amount}("");
-        if (!success){
+        if (!success) {
             (bool success2,) = payable(address(0)).call{value: amount}("");
-            if(!success2){
+            if (!success2) {
                 //do nothing so at least erc20 can move
             }
         }
