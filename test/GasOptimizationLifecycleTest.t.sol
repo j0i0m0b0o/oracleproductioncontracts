@@ -71,31 +71,32 @@ contract GasOptimizationLifecycleTest is Test {
         
         // Create report
         vm.prank(alice);
-        uint256 reportId = oracle.createReportInstance{value: ORACLE_FEE}(
-            address(token1), 
-            address(token2), 
-            1e18,            // exactToken1Report
-            uint16(3000),    // feePercentage (3 bps)
-            uint16(110),     // multiplier (1.1x)
-            uint48(300),     // settlementTime (5 minutes)
-            10e18,           // escalationHalt
-            uint16(5),       // disputeDelay (5 seconds)
-            uint16(1000),    // protocolFee (1 bps)
-            SETTLER_REWARD,
-            true,            // timeType (use timestamps)
-            address(0),      // no callback
-            bytes4(0),       // no callback selector
-            false,           // don't track disputes
-            uint32(0),       // no callback gas limit
-            false            // keepFee false
-        );
+        OpenOracle.CreateReportParams memory params = OpenOracle.CreateReportParams({
+            token1Address: address(token1),
+            token2Address: address(token2),
+            exactToken1Report: 1e18,
+            feePercentage: 3000,
+            multiplier: 110,
+            settlementTime: 300,
+            escalationHalt: 10e18,
+            disputeDelay: 5,
+            protocolFee: 1000,
+            settlerReward: SETTLER_REWARD,
+            timeType: true,
+            callbackContract: address(0),
+            callbackSelector: bytes4(0),
+            trackDisputes: false,
+            callbackGasLimit: 0,
+            keepFee: false
+        });
+        uint256 reportId = oracle.createReportInstance{value: ORACLE_FEE}(params);
         
         // Check Alice paid the oracle fee
         assertEq(alice.balance, aliceETHBefore - ORACLE_FEE, "Alice should have paid oracle fee");
         assertEq(address(oracle).balance, ORACLE_FEE, "Oracle should have received fee");
         
         // Get state hash
-        (bytes32 stateHash, , , , , , , , ) = oracle.extraData(reportId);
+        (bytes32 stateHash,,,,,,,,) = oracle.extraData(reportId);
         
         // Submit initial report
         vm.prank(bob);
@@ -114,7 +115,6 @@ contract GasOptimizationLifecycleTest is Test {
         uint256 aliceToken1BeforeDispute = token1.balanceOf(alice);
         uint256 aliceToken2BeforeDispute = token2.balanceOf(alice);
         uint256 bobToken1BeforeDispute = token1.balanceOf(bob);
-        uint256 bobToken2BeforeDispute = token2.balanceOf(bob);
         
         // Dispute and swap
         vm.prank(alice);
@@ -123,6 +123,7 @@ contract GasOptimizationLifecycleTest is Test {
             address(token1),  // swap token1
             1.1e18,          // new amount1 (1.1x)
             2100e18,         // new amount2
+            alice,           // disputer
             2000e18,         // expected amount2
             stateHash
         );

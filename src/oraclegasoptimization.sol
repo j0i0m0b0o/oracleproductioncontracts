@@ -82,10 +82,10 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         uint48 settlementTime;       
         address token2;              
         bool timeType;               
-        uint16 feePercentage;    // max possible feePercentage = 10000 (100 %), uint16 = 65535  
-        uint16 protocolFee;    // max possible protocolFee = 10000 (100 %)
+        uint24 feePercentage;
+        uint24 protocolFee;
         uint16 multiplier;           
-        uint16 disputeDelay;   // uint16 = max dispute delay = 65535 seconds (approx. 18 hours)
+        uint24 disputeDelay;
     }
 
     struct ReportStatus {
@@ -94,9 +94,8 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         uint256 price;                  
         address payable currentReporter;
         uint48 reportTimestamp;         
-        uint48 lastDisputeBlock;        
-        address payable initialReporter;
         uint48 settlementTimestamp;     
+        address payable initialReporter;
         uint48 initialReportTimestamp;  
         uint48 lastReportTrueTime;      
         bool isSettled;                 
@@ -109,18 +108,18 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         uint256 escalationHalt;     
         uint256 settlerReward;      
         address token1Address;      
-        address token2Address;      
         uint48 settlementTime;      
-        uint16 disputeDelay;    
-        uint16 protocolFee;         
-        uint16 multiplier;          
-        address callbackContract;   
+        uint24 disputeDelay;    
+        uint24 protocolFee;         
+        address token2Address;      
         uint32 callbackGasLimit;    
-        uint16 feePercentage;       
-        bytes4 callbackSelector;    
+        uint24 feePercentage;       
+        uint16 multiplier;          
         bool timeType;                  
         bool trackDisputes;         
         bool keepFee;               
+        address callbackContract;   
+        bytes4 callbackSelector;    
     }
 
     // Events
@@ -345,12 +344,12 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         address token1Address,
         address token2Address,
         uint256 exactToken1Report,
-        uint16 feePercentage,
+        uint24 feePercentage,
         uint16 multiplier,
         uint48 settlementTime,
         uint256 escalationHalt,
-        uint16 disputeDelay,
-        uint16 protocolFee,
+        uint24 disputeDelay,
+        uint24 protocolFee,
         uint256 settlerReward
     ) external payable returns (uint256 reportId) {
         CreateReportParams memory params = CreateReportParams({
@@ -516,7 +515,6 @@ contract OpenOracle is ReentrancyGuard, Ownable {
         status.initialReportTimestamp = status.reportTimestamp;
         status.price = (amount1 * PRICE_PRECISION) / amount2;
         status.lastReportTrueTime = uint48(block.timestamp);
-        status.lastDisputeBlock = _getBlockNumber();
 
         if (extra.trackDisputes) {
             disputeHistory[reportId][0].amount1 = amount1;
@@ -596,7 +594,6 @@ function disputeAndSwap(uint256 reportId, address tokenToSwap, uint256 newAmount
         status.reportTimestamp = meta.timeType ? uint48(block.timestamp) : _getBlockNumber();
         status.price = (newAmount1 * PRICE_PRECISION) / newAmount2;
         status.disputeOccurred = true;
-        status.lastDisputeBlock = _getBlockNumber();
         status.lastReportTrueTime = uint48(block.timestamp);
 
         if (extraData[reportId].trackDisputes) {

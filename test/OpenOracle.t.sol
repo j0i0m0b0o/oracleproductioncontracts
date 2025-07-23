@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {Test, console} from "forge-std/Test.sol";
-import {OpenOracle} from "../src/OpenOracleL1.sol";
+import {OpenOracle} from "src/oraclegasoptimization.sol";
 
 import {MockERC20} from "./MockERC20.sol";
 
@@ -47,7 +47,9 @@ contract OracleTest is Test {
         );
 
         // submit initial report: 1 eth = 3000 usdt
-        oracle.submitInitialReport(reportId, 1 ether, 3000e18);
+        // Get the state hash from extra data
+        (bytes32 stateHash,,,,,,,,) = oracle.extraData(reportId);
+        oracle.submitInitialReport(reportId, 1 ether, 3000e18, stateHash);
 
         // fast forward settlementTime + 1s
         skip(61);
@@ -75,7 +77,7 @@ contract OracleTest is Test {
             0.0001 ether
         );
 
-        (,,,,,,,,,,, uint256 requestBlock) = oracle.reportMeta(reportId);
+        (,,,, address token1, uint48 requestBlock,, address token2, bool timeType, uint24 feePercentage, uint24 protocolFee, uint16 multiplier, uint24 disputeDelay) = oracle.reportMeta(reportId);
         assertEq(requestBlock, currentBlock);
     }
 
@@ -99,7 +101,7 @@ contract OracleTest is Test {
     }
 
     function testCannotSetZeroFeeRecipient() public {
-        vm.expectRevert("Invalid recipient address");
+        vm.expectRevert(abi.encodeWithSignature("InvalidInput(string)", "recipient address"));
         oracle.updateProtocolFeeRecipient(address(0));
     }
 
@@ -120,7 +122,7 @@ contract OracleTest is Test {
         assertGt(address(this).balance, balanceBefore);
         
         // Check report is marked as settled
-        (,,,,,, uint256 reportPrice,, bool isSettled,,,) = oracle.reportStatus(reportId);
+        (,, uint256 reportPrice,, uint48 reportTimestamp, uint48 reportSettlementTimestamp,, uint48 initialReportTimestamp, uint48 lastReportTrueTime, bool isSettled, bool disputeOccurred, bool isDistributed) = oracle.reportStatus(reportId);
         assertTrue(isSettled);
         assertEq(reportPrice, price);
     }
@@ -143,7 +145,7 @@ contract OracleTest is Test {
         assertGt(address(this).balance, balanceBefore);
         
         // Check report is not marked as settled
-        (,,,,,, uint256 reportPrice,, bool isSettled,,,) = oracle.reportStatus(reportId);
+        (,, uint256 reportPrice,, uint48 reportTimestamp, uint48 reportSettlementTimestamp,, uint48 initialReportTimestamp, uint48 lastReportTrueTime, bool isSettled, bool disputeOccurred, bool isDistributed) = oracle.reportStatus(reportId);
         assertFalse(isSettled);
         // The price is still stored from the initial report, but the report is not marked as settled
         assertGt(reportPrice, 0);
@@ -189,13 +191,16 @@ contract OracleTest is Test {
             usdt.approve(address(oracle), token2Needed);
         }
 
-        vm.expectEmit(true, false, false, true);
-        emit ReportDisputed(reportId, address(this), newAmount1, newAmount2, address(weth), address(usdt), 400, 100, 60, 5, 10 ether);
+        // Get the state hash from extra data
+        (bytes32 stateHash,,,,,,,,) = oracle.extraData(reportId);
 
-        oracle.disputeAndSwap(reportId, address(weth), newAmount1, newAmount2);
+        vm.expectEmit(true, false, false, true);
+        emit ReportDisputed(reportId, address(this), newAmount1, newAmount2, address(weth), address(usdt), 400, 100, 60, 5, 10 ether, true, address(0), bytes4(0), false, 0, stateHash);
+
+        oracle.disputeAndSwap(reportId, address(weth), newAmount1, newAmount2, 3000e18, stateHash);
 
         // Check dispute was recorded
-        (,, address currentReporter,,,,,, bool isSettled, bool disputeOccurred,,) = oracle.reportStatus(reportId);
+        (,,, address payable currentReporter,,,,,, bool isSettled, bool disputeOccurred,) = oracle.reportStatus(reportId);
         assertEq(currentReporter, address(this));
         assertTrue(disputeOccurred);
         assertFalse(isSettled);
@@ -221,10 +226,12 @@ contract OracleTest is Test {
         weth.mint(address(this), newAmount1 - 1 ether);
         weth.approve(address(oracle), newAmount1 - 1 ether);
 
-        oracle.disputeAndSwap(reportId, address(usdt), newAmount1, newAmount2);
+        // Get the state hash from extra data
+        (bytes32 stateHash,,,,,,,,) = oracle.extraData(reportId);
+        oracle.disputeAndSwap(reportId, address(usdt), newAmount1, newAmount2, 3000e18, stateHash);
 
         // Check dispute was recorded
-        (,,,,,,,, /* bool isSettled */, bool disputeOccurred,,) = oracle.reportStatus(reportId);
+        (,,,,,,, uint48 initialReportTimestamp, uint48 lastReportTrueTime, /* bool isSettled */, bool disputeOccurred, bool isDistributed) = oracle.reportStatus(reportId);
         assertTrue(disputeOccurred);
     }
 
@@ -234,8 +241,10 @@ contract OracleTest is Test {
         // Try to dispute before dispute delay
         skip(4);
 
+        // Get the state hash from extra data
+        (bytes32 stateHash,,,,,,,,) = oracle.extraData(reportId);
         vm.expectRevert(abi.encodeWithSignature("InvalidTiming(string)", "dispute too early"));
-        oracle.disputeAndSwap(reportId, address(weth), 1.1 ether, 3300e18);
+        oracle.disputeAndSwap(reportId, address(weth), 1.1 ether, 3300e18, 3000e18, stateHash);
     }
 
     function testCannotDisputeAfterSettlement() public {
@@ -244,8 +253,10 @@ contract OracleTest is Test {
         // Fast forward past settlement time
         skip(65);
 
+        // Get the state hash from extra data
+        (bytes32 stateHash,,,,,,,,) = oracle.extraData(reportId);
         vm.expectRevert(abi.encodeWithSignature("InvalidTiming(string)", "dispute period expired"));
-        oracle.disputeAndSwap(reportId, address(weth), 1.1 ether, 3300e18);
+        oracle.disputeAndSwap(reportId, address(weth), 1.1 ether, 3300e18, 3000e18, stateHash);
     }
 
     function testCannotDisputeWithSamePrice() public {
@@ -257,8 +268,10 @@ contract OracleTest is Test {
         uint256 newAmount1 = (1 ether * 110) / 100;
         uint256 newAmount2 = 3300e18; // This should be close enough to original price to be within boundaries
         
+        // Get the state hash from extra data
+        (bytes32 stateHash,,,,,,,,) = oracle.extraData(reportId);
         vm.expectRevert(abi.encodeWithSignature("OutOfBounds(string)", "price within boundaries"));
-        oracle.disputeAndSwap(reportId, address(weth), newAmount1, newAmount2);
+        oracle.disputeAndSwap(reportId, address(weth), newAmount1, newAmount2, 3000e18, stateHash);
     }
 
     function testProtocolFeeWithdrawal() public {
@@ -279,7 +292,9 @@ contract OracleTest is Test {
         weth.mint(address(this), newAmount1 - 1 ether);
         weth.approve(address(oracle), newAmount1 - 1 ether);
 
-        oracle.disputeAndSwap(reportId, address(usdt), newAmount1, newAmount2);
+        // Get the state hash from extra data
+        (bytes32 stateHash,,,,,,,,) = oracle.extraData(reportId);
+        oracle.disputeAndSwap(reportId, address(usdt), newAmount1, newAmount2, 3000e18, stateHash);
 
         // Check protocol fees were accumulated
         uint256 protocolFeesAccumulated = oracle.protocolFees(address(usdt));
@@ -346,20 +361,23 @@ contract OracleTest is Test {
             address(weth), address(usdt), 1 ether, 400, 110, 60, 10 ether, 5, 100, 0.0001 ether
         );
 
+        // Get the state hash from extra data
+        (bytes32 stateHash,,,,,,,,) = oracle.extraData(reportId);
+
         // Test wrong token1 amount
         vm.expectRevert(abi.encodeWithSignature("InvalidInput(string)", "token1 amount"));
-        oracle.submitInitialReport(reportId, 2 ether, 3000e18);
+        oracle.submitInitialReport(reportId, 2 ether, 3000e18, stateHash);
 
         // Test zero token2 amount
         vm.expectRevert(abi.encodeWithSignature("InvalidInput(string)", "token2 amount"));
-        oracle.submitInitialReport(reportId, 1 ether, 0);
+        oracle.submitInitialReport(reportId, 1 ether, 0, stateHash);
 
         // Submit valid report
-        oracle.submitInitialReport(reportId, 1 ether, 3000e18);
+        oracle.submitInitialReport(reportId, 1 ether, 3000e18, stateHash);
 
         // Test double submission
         vm.expectRevert(abi.encodeWithSignature("AlreadyProcessed(string)", "report submitted"));
-        oracle.submitInitialReport(reportId, 1 ether, 3000e18);
+        oracle.submitInitialReport(reportId, 1 ether, 3000e18, stateHash);
     }
 
     function testGasOptimization() public {
@@ -369,7 +387,9 @@ contract OracleTest is Test {
         );
         
         uint256 gasBefore = gasleft();
-        oracle.submitInitialReport(reportId, 1 ether, 3000e18);
+        // Get the state hash from extra data
+        (bytes32 stateHash,,,,,,,,) = oracle.extraData(reportId);
+        oracle.submitInitialReport(reportId, 1 ether, 3000e18, stateHash);
         uint256 gasUsed = gasBefore - gasleft();
         
         // submitInitialReport should use reasonable gas (less than 300k)
@@ -386,32 +406,40 @@ contract OracleTest is Test {
     }
 
     function testEventEmissions() public {
-        // Test ReportInstanceCreated event
-        vm.expectEmit(true, true, true, true);
-        emit ReportInstanceCreated(
-            1, address(weth), address(usdt), 400, 110, 1 ether, 0.001 ether, 
-            address(this), 60, 10 ether, 5, 100, 0.0001 ether
-        );
-        
+        // First create report instance to get the stateHash
         uint256 reportId = oracle.createReportInstance{value: 0.001 ether}(
             address(weth), address(usdt), 1 ether, 400, 110, 60, 10 ether, 5, 100, 0.0001 ether
         );
-
-        // Test InitialReportSubmitted event
-        vm.expectEmit(true, false, false, true);
-        emit InitialReportSubmitted(
-            reportId, address(this), 1 ether, 3000e18, address(weth), address(usdt), 400, 100, 60, 5, 10 ether
+        
+        // Get the state hash from extra data  
+        (bytes32 expectedStateHash,,,,,,,,) = oracle.extraData(reportId);
+        
+        // Now test the event with the actual state hash - create another report
+        vm.expectEmit(true, true, true, true);
+        emit ReportInstanceCreated(
+            2, address(weth), address(usdt), 400, 110, 1 ether, 0.001 ether, 
+            address(this), 60, 10 ether, 5, 100, 0.0001 ether, true, address(0), bytes4(0), false, 0, false, expectedStateHash
         );
         
-        oracle.submitInitialReport(reportId, 1 ether, 3000e18);
+        uint256 reportId2 = oracle.createReportInstance{value: 0.001 ether}(
+            address(weth), address(usdt), 1 ether, 400, 110, 60, 10 ether, 5, 100, 0.0001 ether
+        );
+
+        // Test InitialReportSubmitted event - use reportId2
+        vm.expectEmit(true, false, false, true);
+        emit InitialReportSubmitted(
+            reportId2, address(this), 1 ether, 3000e18, address(weth), address(usdt), 400, 100, 60, 5, 10 ether, true, address(0), bytes4(0), false, 0, expectedStateHash
+        );
+        
+        oracle.submitInitialReport(reportId2, 1 ether, 3000e18, expectedStateHash);
 
         // Test ReportSettled event
         skip(61);
         
         vm.expectEmit(true, false, false, false);
-        emit ReportSettled(reportId, 0, 0); // Will be filled with actual values
+        emit ReportSettled(reportId2, 0, 0); // Will be filled with actual values
         
-        oracle.settle(reportId);
+        oracle.settle(reportId2);
     }
 
     // Helper function to create and submit a report
@@ -429,7 +457,9 @@ contract OracleTest is Test {
             0.0001 ether
         );
 
-        oracle.submitInitialReport(reportId, 1 ether, 3000e18);
+        // Get the state hash from extra data
+        (bytes32 stateHash,,,,,,,,) = oracle.extraData(reportId);
+        oracle.submitInitialReport(reportId, 1 ether, 3000e18, stateHash);
     }
 
     // Events for testing
@@ -446,7 +476,14 @@ contract OracleTest is Test {
         uint256 escalationHalt,
         uint256 disputeDelay,
         uint256 protocolFee,
-        uint256 settlerReward
+        uint256 settlerReward,
+        bool timeType,
+        address callbackContract,
+        bytes4 callbackSelector,
+        bool trackDisputes,
+        uint256 callbackGasLimit,
+        bool keepFee,
+        bytes32 stateHash
     );
 
     event InitialReportSubmitted(
@@ -460,7 +497,13 @@ contract OracleTest is Test {
         uint256 protocolFee,
         uint256 settlementTime,
         uint256 disputeDelay,
-        uint256 escalationHalt
+        uint256 escalationHalt,
+        bool timeType,
+        address callbackContract,
+        bytes4 callbackSelector,
+        bool trackDisputes,
+        uint256 callbackGasLimit,
+        bytes32 stateHash
     );
 
     event ReportDisputed(
@@ -474,7 +517,13 @@ contract OracleTest is Test {
         uint256 protocolFee,
         uint256 settlementTime,
         uint256 disputeDelay,
-        uint256 escalationHalt
+        uint256 escalationHalt,
+        bool timeType,
+        address callbackContract,
+        bytes4 callbackSelector,
+        bool trackDisputes,
+        uint256 callbackGasLimit,
+        bytes32 stateHash
     );
 
     event ReportSettled(uint256 indexed reportId, uint256 price, uint256 settlementTimestamp);
